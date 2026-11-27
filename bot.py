@@ -23,7 +23,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
-VERSION = "v11: квадрат 800x800 + фото по центру"
+VERSION = "v12: тонкие черные поля, крупное фото"
 
 # ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
 
@@ -214,7 +214,7 @@ def wrap_lines(text, font, max_w):
         lines.append(line)
     return lines
 
-def fit_text(text, max_w, max_h, start, min_size=14):
+def fit_text(text, max_w, max_h, start, min_size=12):
     for size in range(start, min_size - 1, -2):
         font = get_font(size)
         lines = wrap_lines(text, font, max_w)
@@ -230,9 +230,9 @@ def fit_text(text, max_w, max_h, start, min_size=14):
 
 def stamp_version(d, canvas):
     tag = VERSION.split(":")[0]
-    font = get_font(14)
+    font = get_font(12)
     w = int(font.getlength(tag))
-    d.text((canvas.width - w - 10, canvas.height - 24), tag,
+    d.text((canvas.width - w - 8, canvas.height - 20), tag,
            fill=(120, 120, 120), font=font)
 
 # ---------- Демотиваторы ----------
@@ -240,20 +240,20 @@ def stamp_version(d, canvas):
 def draw_two_tier(d, center_x, max_w, zone_top, zone_h, title, subtitle, fill):
     if subtitle:
         title_zone = int(zone_h * 0.55)
-        sub_zone = zone_h - title_zone - 14
+        sub_zone = zone_h - title_zone - 10
     else:
         title_zone = zone_h
         sub_zone = 0
 
-    font_t, lines_t, lh_t, size_t = fit_text(title, max_w, title_zone, start=52)
+    font_t, lines_t, lh_t, size_t = fit_text(title, max_w, title_zone, start=44)
     lines_s, font_s, lh_s = [], None, 0
     if subtitle:
-        sub_start = max(14, int(size_t * 0.55))
+        sub_start = max(12, int(size_t * 0.55))
         font_s, lines_s, lh_s, _ = fit_text(subtitle, max_w, sub_zone, start=sub_start)
 
     block_h = len(lines_t) * lh_t
     if subtitle:
-        block_h += 14 + len(lines_s) * lh_s
+        block_h += 10 + len(lines_s) * lh_s
 
     top = zone_top + (zone_h - block_h) // 2
 
@@ -262,7 +262,7 @@ def draw_two_tier(d, center_x, max_w, zone_top, zone_h, title, subtitle, fill):
         d.text((center_x, y + lh_t / 2), ln, fill=fill, font=font_t, anchor="mm")
         y += lh_t
     if subtitle:
-        y += 14
+        y += 10
         for ln in lines_s:
             d.text((center_x, y + lh_s / 2), ln, fill=fill, font=font_s, anchor="mm")
             y += lh_s
@@ -273,12 +273,12 @@ def make_demotivator(src, caption):
 
     # --- ВСЁ СЧИТАЕТСЯ ОТ КВАДРАТНОГО ХОЛСТА ---
     CANVAS = 800   # итоговый размер картинки: 800 x 800, всегда квадрат
-    MARGIN = 30    # черные поля вокруг рамки
+    MARGIN = 15    # черные поля вокруг рамки (тонкие, вдвое меньше)
     BORDER = 3     # толщина белой рамки
-    TEXT_H = 170   # высота черной зоны под текст
+    TEXT_H = 85    # высота черной зоны под текст (вдвое меньше)
 
     # фото = холст минус поля, рамка и текстовая зона — тоже квадрат
-    PHOTO = CANVAS - MARGIN * 2 - BORDER * 2 - TEXT_H  # 564
+    PHOTO = CANVAS - MARGIN * 2 - BORDER * 2 - TEXT_H  # 679
 
     photo = img.resize((PHOTO, PHOTO))
 
@@ -290,7 +290,7 @@ def make_demotivator(src, caption):
     H = CANVAS  # ширина = высота, ровный квадрат
     canvas = Image.new("RGB", (W, H), (0, 0, 0))
 
-    # рамку с фото центрируем по горизонтали — иначе она уезжает влево
+    # рамку с фото центрируем по горизонтали
     x = (CANVAS - framed.width) // 2
     canvas.paste(framed, (x, MARGIN))
 
