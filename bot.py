@@ -23,14 +23,14 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
+VERSION = "v6: квадрат + заглавная + заголовок/подпись"
+
 # ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
 
 FONT_PATH = os.path.join(DATA_DIR, "DemFont-Bold.ttf")
 
 FONT_URLS = [
-    # жирный шрифт с засечками, как на классических демотиваторах
     "https://github.com/matplotlib/matplotlib/raw/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSerif-Bold.ttf",
-    # запасной вариант — просто жирный
     "https://github.com/matplotlib/matplotlib/raw/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans-Bold.ttf",
 ]
 
@@ -94,8 +94,8 @@ load_photos_db()
 class Markov:
     def __init__(self, chat_id):
         self.chat_id = chat_id
-        self.chain = {}    # слово -> {следующее слово: сколько раз}
-        self.starts = []   # слова, с которых начинаются фразы
+        self.chain = {}
+        self.starts = []
         self.load()
 
     def _path(self):
@@ -182,13 +182,30 @@ def is_admin(m):
     except Exception:
         return False
 
-# ---------- Заглавная первая буква ----------
+# ---------- Текст: заголовок + подпись ----------
 
 def capitalize_caption(caption):
     caption = caption.strip()
     if caption:
         caption = caption[0].upper() + caption[1:]
     return caption
+
+def split_caption(caption):
+    # делим текст на заголовок (крупный) и подпись (мельче)
+    # 1) если есть второе предложение — режем по нему
+    for punct in (". ", "! ", "? "):
+        idx = caption.find(punct)
+        if idx != -1:
+            title = caption[:idx + 1].strip()
+            sub = caption[idx + 1:].strip()
+            if sub:
+                return title, sub
+    # 2) иначе делим слова примерно пополам
+    words = caption.split()
+    if len(words) < 4:
+        return caption, ""
+    mid = (len(words) + 1) // 2
+    return " ".join(words[:mid]), " ".join(words[mid:])
 
 # ---------- Перенос и подбор размера текста ----------
 
@@ -206,31 +223,62 @@ def wrap_lines(draw, text, font, max_w):
         lines.append(line)
     return lines
 
-def fit_text(draw, text, max_w, max_h, start=56, min_size=18):
-    # подбираем самый крупный размер, при котором текст влезает по ширине и высоте
+def fit_text(draw, text, max_w, max_h, start, min_size=14):
     for size in range(start, min_size - 1, -2):
         font = get_font(size)
         lines = wrap_lines(draw, text, font, max_w)
-        line_h = int(size * 1.15)
+        line_h = int(size * 1.2)
         widest = max(draw.textlength(ln, font=font) for ln in lines)
         if len(lines) * line_h <= max_h and widest <= max_w:
             return font, lines, line_h, size
     font = get_font(min_size)
     lines = wrap_lines(draw, text, font, max_w)
-    return font, lines, int(min_size * 1.15), min_size
+    return font, lines, int(min_size * 1.2), min_size
 
 # ---------- Демотиваторы ----------
+
+def draw_two_tier(d, canvas_w, text_top, title, subtitle, fill):
+    # рисуем заголовок крупно и подпись мельче, всё по центру
+    max_w = canvas_w
+    if subtitle:
+        title_zone = int(text_top * 0.55)
+        sub_zone = text_top - title_zone - 12
+    else:
+        title_zone = text_top
+        sub_zone = 0
+
+    font_t, lines_t, lh_t, size_t = fit_text(d, title, max_w, title_zone, start=52)
+    lines_s, font_s, lh_s = [], None, 0
+    if subtitle:
+        sub_start = max(14, int(size_t * 0.52))
+        font_s, lines_s, lh_s, _ = fit_text(d, subtitle, max_w, sub_zone, start=sub_start)
+
+    total_h = len(lines_t) * lh_t
+    if subtitle:
+        total_h += 12 + len(lines_s) * lh_s
+    y = (text_top - total_h) // 2
+
+    for ln in lines_t:
+        x = int((canvas_w - d.textlength(ln, font=font_t)) / 2)
+        d.text((x, y), ln, fill=fill, font=font_t)
+        y += lh_t
+    if subtitle:
+        y += 12
+        for ln in lines_s:
+            x = int((canvas_w - d.textlength(ln, font=font_s)) / 2)
+            d.text((x, y), ln, fill=fill, font=font_s)
+            y += lh_s
+
 
 def make_demotivator(src, caption):
     img = Image.open(src).convert("RGB")
 
     PHOTO_W = 700   # ширина = высота фото: всегда квадрат, как в классике
-    BORDER  = 2     # толщина белой рамки
+    BORDER  = 3     # толщина белой рамки
     MARGIN  = 30    # черные поля вокруг рамки
-    TEXT_H  = 140   # высота черной зоны под текст (компактная, как у классики)
+    TEXT_H  = 170   # высота черной зоны под текст
 
-    # Фото принудительно сплющивается до квадрата 700x700,
-    # каким бы вытянутым оно ни было — итог всегда стандартного размера
+    # Фото принудительно сплющивается до квадрата 700x700
     photo = img.resize((PHOTO_W, PHOTO_W))
 
     framed = Image.new("RGB", (photo.width + BORDER * 2,
@@ -243,16 +291,10 @@ def make_demotivator(src, caption):
     canvas.paste(framed, (MARGIN, MARGIN))
 
     caption = capitalize_caption(caption)
+    title, subtitle = split_caption(caption)
 
     d = ImageDraw.Draw(canvas)
-    font, lines, line_h, _ = fit_text(d, caption, W - MARGIN * 2, TEXT_H - 20)
-
-    total_h = len(lines) * line_h
-    y = framed.height + MARGIN * 2 + (TEXT_H - total_h) // 2
-    for ln in lines:
-        x = int((W - d.textlength(ln, font=font)) / 2)
-        d.text((x, y), ln, fill=(255, 255, 255), font=font)
-        y += line_h
+    draw_two_tier(d, W - MARGIN * 2 - 10, TEXT_H, title, subtitle, fill=(255, 255, 255))
 
     out = os.path.join(DATA_DIR, f"dem_{int(time.time() * 1000)}.jpg")
     canvas.save(out, quality=95)
@@ -260,18 +302,13 @@ def make_demotivator(src, caption):
 
 
 def make_text_demotivator(caption):
-    W, H = 900, 650
-    img = Image.new("RGB", (W, H), (255, 255, 255))
+    W, H = 900, 700
+    img = Image.new("RGB", (W, H), (0, 0, 0))
     d = ImageDraw.Draw(img)
-    caption = capitalize_caption(caption)
-    font, lines, line_h, _ = fit_text(d, caption, W - 80, H - 80, start=48)
 
-    total_h = len(lines) * line_h
-    y = (H - total_h) // 2
-    for ln in lines:
-        x = int((W - d.textlength(ln, font=font)) / 2)
-        d.text((x, y), ln, fill=(0, 0, 0), font=font)
-        y += line_h
+    caption = capitalize_caption(caption)
+    title, subtitle = split_caption(caption)
+    draw_two_tier(d, W - 80, H - 80, title, subtitle, fill=(255, 255, 255))
 
     out = os.path.join(DATA_DIR, f"demtxt_{int(time.time() * 1000)}.jpg")
     img.save(out, quality=95)
@@ -387,11 +424,16 @@ HELP = ("Я учусь на ваших сообщениях и огрызаюс�
         "«д д д» реплаем на фото — демотиватор\n"
         "«д д д фраза» — картинка из чата с вашей фразой\n"
         "/stats — сколько я выучил\n"
+        "/version — какая версия у меня на борту\n"
         "/forget — забыть всё выученное (только админ)")
 
 @bot.message_handler(commands=["start", "help"])
 def cmd_help(m):
     bot.send_message(m.chat.id, HELP)
+
+@bot.message_handler(commands=["version"])
+def cmd_version(m):
+    bot.send_message(m.chat.id, "Версия: " + VERSION)
 
 @bot.message_handler(commands=["prob"])
 def cmd_prob(m):
@@ -500,9 +542,5 @@ def on_photo(m):
     if random.randint(1, 100) <= s.get("dem_prob", 20):
         photo_to_dem(m.chat.id, m, None)
 
-print("Бот запущен")
+print("=== ЗАПУЩЕНА ВЕРСИЯ:", VERSION, "===")
 bot.infinity_polling(skip_pending=True)
-print("=== ЗАПУЩЕНА ВЕРСИЯ v5: КВАДРАТ + ЗАГЛАВНАЯ ===")
-@bot.message_handler(commands=["version"])
-def cmd_version(m):
-    bot.send_message(m.chat.id, "Версия v5: квадрат + заглавная буква")
