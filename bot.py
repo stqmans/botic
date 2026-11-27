@@ -35,12 +35,10 @@ FONT_URLS = [
 ]
 
 def get_font(size):
-    # 1) уже скачанный шрифт
     try:
         return ImageFont.truetype(FONT_PATH, size)
     except Exception:
         pass
-    # 2) качаем из интернета и сохраняем навсегда
     for url in FONT_URLS:
         try:
             r = requests.get(url, timeout=15)
@@ -50,7 +48,6 @@ def get_font(size):
             return ImageFont.truetype(FONT_PATH, size)
         except Exception:
             pass
-    # 3) системные шрифты
     for path in ("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
@@ -58,7 +55,6 @@ def get_font(size):
             return ImageFont.truetype(path, size)
         except Exception:
             pass
-    # 4) совсем всё плохо — встроенный
     return ImageFont.load_default(size)
 
 # ---------- Память о фото чата (сохраняется на диск) ----------
@@ -186,6 +182,14 @@ def is_admin(m):
     except Exception:
         return False
 
+# ---------- Заглавная первая буква ----------
+
+def capitalize_caption(caption):
+    caption = caption.strip()
+    if caption:
+        caption = caption[0].upper() + caption[1:]
+    return caption
+
 # ---------- Перенос и подбор размера текста ----------
 
 def wrap_lines(draw, text, font, max_w):
@@ -202,9 +206,9 @@ def wrap_lines(draw, text, font, max_w):
         lines.append(line)
     return lines
 
-def fit_text(draw, text, max_w, max_h, start=72, min_size=18):
+def fit_text(draw, text, max_w, max_h, start=56, min_size=18):
     # подбираем самый крупный размер, при котором текст влезает по ширине и высоте
-    for size in range(start, min_size - 1, -4):
+    for size in range(start, min_size - 1, -2):
         font = get_font(size)
         lines = wrap_lines(draw, text, font, max_w)
         line_h = int(size * 1.15)
@@ -220,10 +224,10 @@ def fit_text(draw, text, max_w, max_h, start=72, min_size=18):
 def make_demotivator(src, caption):
     img = Image.open(src).convert("RGB")
 
-    PHOTO_W = 700   # ширина фото = высота фото (квадрат, как в классике)
+    PHOTO_W = 700   # ширина = высота фото: всегда квадрат, как в классике
     BORDER  = 2     # толщина белой рамки
     MARGIN  = 30    # черные поля вокруг рамки
-    TEXT_H  = 200   # высота черной зоны под текст
+    TEXT_H  = 140   # высота черной зоны под текст (компактная, как у классики)
 
     # Фото принудительно сплющивается до квадрата 700x700,
     # каким бы вытянутым оно ни было — итог всегда стандартного размера
@@ -237,6 +241,8 @@ def make_demotivator(src, caption):
     H = framed.height + MARGIN * 2 + TEXT_H
     canvas = Image.new("RGB", (W, H), (0, 0, 0))
     canvas.paste(framed, (MARGIN, MARGIN))
+
+    caption = capitalize_caption(caption)
 
     d = ImageDraw.Draw(canvas)
     font, lines, line_h, _ = fit_text(d, caption, W - MARGIN * 2, TEXT_H - 20)
@@ -257,7 +263,8 @@ def make_text_demotivator(caption):
     W, H = 900, 650
     img = Image.new("RGB", (W, H), (255, 255, 255))
     d = ImageDraw.Draw(img)
-    font, lines, line_h, _ = fit_text(d, caption, W - 80, H - 80, start=64)
+    caption = capitalize_caption(caption)
+    font, lines, line_h, _ = fit_text(d, caption, W - 80, H - 80, start=48)
 
     total_h = len(lines) * line_h
     y = (H - total_h) // 2
