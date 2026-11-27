@@ -23,31 +23,36 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
-# ---------- Жирный шрифт ----------
+# ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
 
-FONT_PATH = os.path.join(DATA_DIR, "DejaVuSans-Bold.ttf")
+FONT_PATH = os.path.join(DATA_DIR, "DemFont-Bold.ttf")
+
+FONT_URLS = [
+    # жирный шрифт с засечками, как на классических демотиваторах
+    "https://github.com/matplotlib/matplotlib/raw/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSerif-Bold.ttf",
+    # запасной вариант — просто жирный
+    "https://github.com/matplotlib/matplotlib/raw/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans-Bold.ttf",
+]
 
 def get_font(size):
-    # 1) уже скачанный жирный шрифт
+    # 1) уже скачанный шрифт
     try:
         return ImageFont.truetype(FONT_PATH, size)
     except Exception:
         pass
-    # 2) качаем жирный шрифт и сохраняем навсегда
-    try:
-        url = ("https://github.com/matplotlib/matplotlib/raw/main/"
-               "lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans-Bold.ttf")
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        with open(FONT_PATH, "wb") as f:
-            f.write(r.content)
-        return ImageFont.truetype(FONT_PATH, size)
-    except Exception:
-        pass
-    # 3) системные жирные шрифты
-    for path in ("DejaVuSans-Bold.ttf",
+    # 2) качаем из интернета и сохраняем навсегда
+    for url in FONT_URLS:
+        try:
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            with open(FONT_PATH, "wb") as f:
+                f.write(r.content)
+            return ImageFont.truetype(FONT_PATH, size)
+        except Exception:
+            pass
+    # 3) системные шрифты
+    for path in ("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                 "DejaVuSans.ttf",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
         try:
             return ImageFont.truetype(path, size)
@@ -181,15 +186,14 @@ def is_admin(m):
     except Exception:
         return False
 
-# ---------- Разбивка текста на строки ----------
+# ---------- Перенос и подбор размера текста ----------
 
-def wrap_lines(d, text, font, max_w, stroke_w):
+def wrap_lines(draw, text, font, max_w):
     words = text.split()
     lines, line = [], ""
     for w in words:
         test = (line + " " + w).strip()
-        bb = d.textbbox((0, 0), test, font=font, stroke_width=stroke_w)
-        if bb[2] - bb[0] > max_w and line:
+        if draw.textlength(test, font=font) > max_w and line:
             lines.append(line)
             line = w
         else:
@@ -198,16 +202,28 @@ def wrap_lines(d, text, font, max_w, stroke_w):
         lines.append(line)
     return lines
 
+def fit_text(draw, text, max_w, max_h, start=72, min_size=18):
+    # подбираем самый крупный размер, при котором текст влезает по ширине и высоте
+    for size in range(start, min_size - 1, -4):
+        font = get_font(size)
+        lines = wrap_lines(draw, text, font, max_w)
+        line_h = int(size * 1.15)
+        widest = max(draw.textlength(ln, font=font) for ln in lines)
+        if len(lines) * line_h <= max_h and widest <= max_w:
+            return font, lines, line_h, size
+    font = get_font(min_size)
+    lines = wrap_lines(draw, text, font, max_w)
+    return font, lines, int(min_size * 1.15), min_size
+
 # ---------- Демотиваторы ----------
 
 def make_demotivator(src, caption):
     img = Image.open(src).convert("RGB")
 
-    PHOTO_W   = 700   # ширина фото внутри рамки
-    BORDER    = 2     # толщина белой рамки
-    MARGIN    = 30    # черные поля вокруг рамки
-    TEXT_H    = 140   # высота зоны под текст снизу
-    STROKE    = 2     # толщина обводки (делает текст жирнее)
+    PHOTO_W = 700   # ширина фото внутри рамки
+    BORDER  = 2     # толщина белой рамки
+    MARGIN  = 30    # черные поля вокруг рамки
+    TEXT_H  = 200   # высота черной зоны под текст
 
     ratio = PHOTO_W / img.width
     photo = img.resize((PHOTO_W, int(img.height * ratio)))
@@ -222,26 +238,13 @@ def make_demotivator(src, caption):
     canvas.paste(framed, (MARGIN, MARGIN))
 
     d = ImageDraw.Draw(canvas)
-    max_w = W - MARGIN * 2 - 20
+    font, lines, line_h, _ = fit_text(d, caption, W - MARGIN * 2, TEXT_H - 20)
 
-    # подбираем размер шрифта: строки должны влезть и по ширине, и по высоте
-    size = 56
-    while size >= 18:
-        font = get_font(size)
-        lines = wrap_lines(d, caption, font, max_w, STROKE)
-        if len(lines) * int(size * 1.25) <= TEXT_H - 24:
-            break
-        size -= 4
-
-    line_h = int(size * 1.25)
     total_h = len(lines) * line_h
     y = framed.height + MARGIN * 2 + (TEXT_H - total_h) // 2
-
     for ln in lines:
-        bb = d.textbbox((0, 0), ln, font=font, stroke_width=STROKE)
-        x = (W - (bb[2] - bb[0])) // 2 - bb[0]
-        d.text((x, y - bb[1]), ln, fill=(255, 255, 255), font=font,
-               stroke_width=STROKE, stroke_fill=(255, 255, 255))
+        x = int((W - d.textlength(ln, font=font)) / 2)
+        d.text((x, y), ln, fill=(255, 255, 255), font=font)
         y += line_h
 
     out = os.path.join(DATA_DIR, f"dem_{int(time.time() * 1000)}.jpg")
@@ -250,28 +253,16 @@ def make_demotivator(src, caption):
 
 
 def make_text_demotivator(caption):
-    W, H = 800, 600
+    W, H = 900, 650
     img = Image.new("RGB", (W, H), (255, 255, 255))
     d = ImageDraw.Draw(img)
-    STROKE = 2
-    max_w = W - 80
+    font, lines, line_h, _ = fit_text(d, caption, W - 80, H - 80, start=64)
 
-    size = 64
-    while size >= 20:
-        font = get_font(size)
-        lines = wrap_lines(d, caption, font, max_w, STROKE)
-        if len(lines) * int(size * 1.3) <= H - 80:
-            break
-        size -= 8
-
-    line_h = int(size * 1.3)
     total_h = len(lines) * line_h
     y = (H - total_h) // 2
     for ln in lines:
-        bb = d.textbbox((0, 0), ln, font=font, stroke_width=STROKE)
-        x = (W - (bb[2] - bb[0])) // 2 - bb[0]
-        d.text((x, y - bb[1]), ln, fill=(0, 0, 0), font=font,
-               stroke_width=STROKE, stroke_fill=(0, 0, 0))
+        x = int((W - d.textlength(ln, font=font)) / 2)
+        d.text((x, y), ln, fill=(0, 0, 0), font=font)
         y += line_h
 
     out = os.path.join(DATA_DIR, f"demtxt_{int(time.time() * 1000)}.jpg")
@@ -447,7 +438,7 @@ def cmd_forget(m):
     if not is_admin(m):
         bot.send_message(m.chat.id, "Только админы меня настраивают.")
         return
-    get_model(m.chat_id).wipe()
+    get_model(m.chat.id).wipe()
     bot.send_message(m.chat.id, "Всё забыл. Можно начинать заново.")
 
 @bot.message_handler(commands=["dem"])
