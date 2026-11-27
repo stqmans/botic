@@ -23,7 +23,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
-VERSION = "v10: итоговый холст строго квадратный"
+VERSION = "v11: квадрат 800x800 + фото по центру"
 
 # ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
 
@@ -287,9 +287,12 @@ def make_demotivator(src, caption):
     framed.paste(photo, (BORDER, BORDER))
 
     W = CANVAS
-    H = CANVAS  # ширина = высота, ровный квадрат со всех сторон
+    H = CANVAS  # ширина = высота, ровный квадрат
     canvas = Image.new("RGB", (W, H), (0, 0, 0))
-    canvas.paste(framed, (MARGIN, MARGIN))
+
+    # рамку с фото центрируем по горизонтали — иначе она уезжает влево
+    x = (CANVAS - framed.width) // 2
+    canvas.paste(framed, (x, MARGIN))
 
     title, subtitle = split_caption(caption.strip())
 
