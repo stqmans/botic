@@ -117,37 +117,162 @@ def is_admin(m):
 
 def make_demotivator(src, caption):
     img = Image.open(src).convert("RGB")
-    img.thumbnail((900, 700))
-    margin = 60
-    canvas = Image.new("RGB", (img.width + margin * 2, img.height + margin * 2 + 100), (0, 0, 0))
-    canvas.paste(img, (margin, margin))
-    draw = ImageDraw.Draw(canvas)
-    try:
-        font = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 36)
-    except OSError:
-        font = ImageFont.load_default()
-    lines = []
-    line = ""
-    for word in caption.split():
-        if len(line) + len(word) + 1 > 40:
 
-            lines.append(line)
-            line = word
-        else:
-            line = (line + " " + word).strip()
-    if line:
-        lines.append(line)
-    y = margin + img.height + 10
-    for ln in lines:
-        bbox = draw.textbbox((0, 0), ln, font=font)
-        x = (canvas.width - (bbox[2] - bbox[0])) // 2
-        draw.text((x, y), ln, fill="white", font=font)
-        y += (bbox[3] - bbox[1]) + 10
+    # --- подстрой под себя ---
+    PHOTO_W   = 700   # ширина фото внутри рамки
+    BORDER    = 2     # толщина белой рамки вокруг фото
+    MARGIN    = 30    # черные поля вокруг рамки (меняй тут!)
+    TEXT_H    = 120   # высота зоны под текст снизу
+    FONT_SIZE = 40
+    # ---------------------------
+
+    ratio = PHOTO_W / img.width
+    photo = img.resize((PHOTO_W, int(img.height * ratio)))
+
+    framed = Image.new("RGB", (photo.width + BORDER * 2,
+                               photo.height + BORDER * 2), (255, 255, 255))
+    framed.paste(photo, (BORDER, BORDER))
+
+    W = framed.width + MARGIN * 2
+    H = framed.height + MARGIN * 2 + TEXT_H
+    canvas = Image.new("RGB", (W, H), (0, 0, 0))
+    canvas.paste(framed, (MARGIN, MARGIN))
+
+    d = ImageDraw.Draw(canvas)
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", FONT_SIZE)
+    except IOError:
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
+        except IOError:
+            font = ImageFont.load_default()
+
+    bbox = d.textbbox((0, 0), caption, font=font)
+    tw = bbox[2] - bbox[0]
+    x = (W - tw) // 2
+    y = framed.height + MARGIN * 2 + (TEXT_H - (bbox[3] - bbox[1])) // 2
+    d.text((x, y), caption, fill=(255, 255, 255), font=font)
+
     out = os.path.join(DATA_DIR, f"dem_{int(time.time() * 1000)}.jpg")
-    canvas.save(out)
+    canvas.save(out, quality=90)
     return out
 
+
 def photo_to_dem(chat_id, msg, caption):
+    if not caption:
+        s = load_settings(chat_id)
+        caption = get_model(chat_id).gen(toxic=s.get("toxic", False)) or "..."
+    file_info = bot.get_file(msg.photo[-1].file_id)
+    data = bot.download_file(file_info.file_path)
+    src = os.path.join(DATA_DIR, f"src_{int(time.time() * 1000)}.jpg")
+    with open(src, "wb") as f:
+        f.write(data)
+    out = make_demotivator(src, caption)
+    with open(out, "rb") as f:
+        bot.send_photo(chat_id, f, reply_to_message_id=msg.message_id)
+
+
+# --- Команда "д д д" ---
+
+# Вариант 1: "д д д" реплаем на фото -> обычный демотиватор
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() == "д д д" and m.reply_to_message)
+def ddd_with_photo(m):
+    target = m.reply_to_message
+    if not target.photo:
+        bot.send_message(m.chat.id, "Реплай должен быть на фото!")
+        return
+    try:
+        photo_to_dem(m.chat.id, target, None)
+    except Exception as e:
+        bot.send_message(m.chat.id, f"Не вышло: {e}")
+
+# Вариант 2: "д д д" без фото -> бот сам придумывает текст
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip().startswith("д д д"))
+def ddd_from_text(m):
+    caption = m.text[5:].strip()  # отрезаем "д д д"
+
+    if not caption:
+        # текст не ввели - бот генерирует его сам из того, что выучил
+        s = load_settings(m.chat.id)
+        caption = get_model(m.chat.id).gen(toxic=s.get("toxic", False)) or "..."
+        if not caption or caption == "...":
+            caption = random.choice([
+                "всё тлен", "я не просил такой жизни",
+                "устал, ложусь", "ничего не понимаю, но смешно"
+            ])
+
+    out = make_text_demotivator(caption)
+    with open(out, "rb") as f:
+        bot.send_photo(m.chat.id, f)
+
+
+# Функция: белая картинка с большим текстом (без фото)
+def make_text_demotivator(caption):
+    W, H = 800, 600
+    img = Image.new("RGB", (W, H), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+    except IOError:
+        font = ImageFont.load_default()
+
+    # переносим длинный текст на строки
+    words = caption.split()
+    lines, line = [], ""
+    for w in words:
+        test = (line + " " + w).strip()
+        if d.textbbox((0, 0), test, font=font)[2] > W - 60:
+            lines.append(line)
+            line = w
+        else:
+            line = test
+    lines.append(line)
+
+    y = (H - len(lines) * 60) // 2
+    for ln in lines:
+        bbox = d.textbbox((0, 0), ln, font=font)
+        x = (W - (bbox[2] - bbox[0])) // 2
+        d.text((x, y), ln, fill=(0, 0, 0), font=font)
+        y += 60
+
+    out = os.path.join(DATA_DIR, f"demtxt_{int(time.time() * 1000)}.jpg")
+    img.save(out, quality=90)
+    return out
+
+
+# Функция: белая картинка с большим текстом (без фото)
+def make_text_demotivator(caption):
+    W, H = 800, 600
+    img = Image.new("RGB", (W, H), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+    except IOError:
+        font = ImageFont.load_default()
+
+    # переносим текст на строки, чтобы влез в картинку
+    words = caption.split()
+    lines, line = [], ""
+    for w in words:
+        test = (line + " " + w).strip()
+        if d.textbbox((0, 0), test, font=font)[2] > W - 60:
+            lines.append(line)
+            line = w
+        else:
+            line = test
+    lines.append(line)
+
+    y = (H - len(lines) * 60) // 2
+    for ln in lines:
+        bbox = d.textbbox((0, 0), ln, font=font)
+        x = (W - (bbox[2] - bbox[0])) // 2
+        d.text((x, y), ln, fill=(0, 0, 0), font=font)
+        y += 60
+
+    out = os.path.join(DATA_DIR, f"demtxt_{int(time.time() * 1000)}.jpg")
+    img.save(out, quality=90)
+    return out
+
     if not caption:
         s = load_settings(chat_id)
         caption = get_model(chat_id).gen(toxic=s.get("toxic", False)) or "..."
