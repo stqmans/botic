@@ -1,7 +1,9 @@
+import io
 import json
 import os
 import re
 import random
+import tarfile
 import time
 
 import requests
@@ -23,42 +25,88 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
-# ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
+# ---------- Шрифт: Liberation Serif Bold (копия Times New Roman) ----------
 
 FONT_PATH = os.path.join(DATA_DIR, "DemFont-Bold.ttf")
 
-FONT_URLS = [
-    # жирный шрифт с засечками, как на классических демотиваторах
+# 1) можно просто положить LiberationSerif-Bold.ttf рядом с bot.py — он подхватится
+LOCAL_FONT_CANDIDATES = ["LiberationSerif-Bold.ttf"]
+
+# 2) если файла нет — качаем (сначала официальный архив, потом запасные зеркала)
+FONT_SOURCES = [
+    "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "https://raw.githubusercontent.com/liberationfonts/liberation-fonts/master/data/ttf/LiberationSerif-Bold.ttf",
+]
+
+# 3) если и это не вышло — системные шрифты (на многих хостингах Liberation уже стоит)
+SYSTEM_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+]
+
+# 4) совсем запасной вариант — DejaVu Serif Bold с matplotlib
+FALLBACK_FONT_URLS = [
     "https://github.com/matplotlib/matplotlib/raw/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSerif-Bold.ttf",
-    # запасной вариант — просто жирный
     "https://github.com/matplotlib/matplotlib/raw/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans-Bold.ttf",
 ]
 
+
+def _install_font_from_tar(data):
+    # внутри официального архива лежит папка с .ttf — вытаскиваем жирный Serif
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            if member.name.endswith("LiberationSerif-Bold.ttf"):
+                with open(FONT_PATH, "wb") as f:
+                    f.write(tar.extractfile(member).read())
+                return True
+    return False
+
+
 def get_font(size):
-    # 1) уже скачанный шрифт
+    # 1) уже скачанный/положенный шрифт
     try:
         return ImageFont.truetype(FONT_PATH, size)
     except Exception:
         pass
-    # 2) качаем из интернета и сохраняем навсегда
-    for url in FONT_URLS:
+    # 2) файл рядом с bot.py
+    for path in LOCAL_FONT_CANDIDATES:
         try:
-            r = requests.get(url, timeout=15)
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    # 3) скачиваем из интернета и сохраняем навсегда
+    for url in FONT_SOURCES:
+        try:
+            r = requests.get(url, timeout=20)
+            r.raise_for_status()
+            if url.endswith(".tar.gz"):
+                if not _install_font_from_tar(r.content):
+                    continue
+            else:
+                with open(FONT_PATH, "wb") as f:
+                    f.write(r.content)
+            return ImageFont.truetype(FONT_PATH, size)
+        except Exception:
+            pass
+    # 4) системные шрифты
+    for path in SYSTEM_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    # 5) качаем запасной DejaVu
+    for url in FALLBACK_FONT_URLS:
+        try:
+            r = requests.get(url, timeout=20)
             r.raise_for_status()
             with open(FONT_PATH, "wb") as f:
                 f.write(r.content)
             return ImageFont.truetype(FONT_PATH, size)
         except Exception:
             pass
-    # 3) системные шрифты
-    for path in ("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
-        try:
-            return ImageFont.truetype(path, size)
-        except Exception:
-            pass
-    # 4) совсем всё плохо — встроенный
+    # 6) совсем всё плохо — встроенный
     return ImageFont.load_default(size)
 
 # ---------- Память о фото чата (сохраняется на диск) ----------
@@ -186,34 +234,64 @@ def is_admin(m):
     except Exception:
         return False
 
-# ---------- Перенос и подбор размера текста ----------
+# ---------- Капитель (первая буква крупная, остальные заглавные мелкие) ----------
 
-def wrap_lines(draw, text, font, max_w):
+def small_caps_fonts(size):
+    big = get_font(size)
+    small = get_font(max(10, int(size * 0.72)))
+    return big, small
+
+
+def word_width(draw, word, big, small):
+    if not word:
+        return 0.0
+    if len(word) == 1:
+        return draw.textlength(word.upper(), font=big)
+    return (draw.textlength(word[0].upper(), font=big)
+            + draw.textlength(word[1:].upper(), font=small))
+
+
+def wrap_small_caps(draw, text, big, small, max_w):
+    space_w = draw.textlength(" ", font=small)
     words = text.split()
-    lines, line = [], ""
+    lines, cur, cur_w = [], [], 0.0
     for w in words:
-        test = (line + " " + w).strip()
-        if draw.textlength(test, font=font) > max_w and line:
-            lines.append(line)
-            line = w
+        ww = word_width(draw, w, big, small)
+        add = ww if not cur else ww + space_w
+        if cur and cur_w + add > max_w:
+            lines.append(cur)
+            cur, cur_w = [w], ww
         else:
-            line = test
-    if line:
-        lines.append(line)
+            cur.append(w)
+            cur_w += add
+    if cur:
+        lines.append(cur)
     return lines
 
-def fit_text(draw, text, max_w, max_h, start=72, min_size=18):
-    # подбираем самый крупный размер, при котором текст влезает по ширине и высоте
+
+def fit_text_small_caps(draw, text, max_w, max_h, start=60, min_size=18):
     for size in range(start, min_size - 1, -4):
-        font = get_font(size)
-        lines = wrap_lines(draw, text, font, max_w)
-        line_h = int(size * 1.15)
-        widest = max(draw.textlength(ln, font=font) for ln in lines)
+        big, small = small_caps_fonts(size)
+        lines = wrap_small_caps(draw, text, big, small, max_w)
+        line_h = int(size * 1.3)
+        widest = max(sum(word_width(draw, w, big, small)
+                         for w in ln) + draw.textlength(" ", font=small) * (len(ln) - 1)
+                     for ln in lines)
         if len(lines) * line_h <= max_h and widest <= max_w:
-            return font, lines, line_h, size
-    font = get_font(min_size)
-    lines = wrap_lines(draw, text, font, max_w)
-    return font, lines, int(min_size * 1.15), min_size
+            return size, lines, line_h
+    return min_size, wrap_small_caps(draw, text, *small_caps_fonts(min_size), max_w), int(min_size * 1.3)
+
+
+def draw_small_caps_line(draw, words, x, y_base, big, small, fill):
+    # y_base — базовая линия текста; все буквы стоят на ней, как в капители
+    for w in words:
+        draw.text((x, y_base), w[0].upper(), font=big, fill=fill, anchor="ls")
+        x += draw.textlength(w[0].upper(), font=big)
+        if len(w) > 1:
+            rest = w[1:].upper()
+            draw.text((x, y_base), rest, font=small, fill=fill, anchor="ls")
+            x += draw.textlength(rest, font=small)
+        x += draw.textlength(" ", font=small)
 
 # ---------- Демотиваторы ----------
 
@@ -223,7 +301,7 @@ def make_demotivator(src, caption):
     PHOTO_W = 700   # ширина фото внутри рамки
     BORDER  = 2     # толщина белой рамки
     MARGIN  = 30    # черные поля вокруг рамки
-    TEXT_H  = 200   # высота черной зоны под текст
+    TEXT_H  = 170   # высота черной зоны под текст
 
     ratio = PHOTO_W / img.width
     photo = img.resize((PHOTO_W, int(img.height * ratio)))
@@ -238,14 +316,18 @@ def make_demotivator(src, caption):
     canvas.paste(framed, (MARGIN, MARGIN))
 
     d = ImageDraw.Draw(canvas)
-    font, lines, line_h, _ = fit_text(d, caption, W - MARGIN * 2, TEXT_H - 20)
+    size, lines, line_h = fit_text_small_caps(d, caption, W - MARGIN * 2 - 20, TEXT_H - 20)
+    big, small = small_caps_fonts(size)
 
+    space_w = d.textlength(" ", font=small)
     total_h = len(lines) * line_h
-    y = framed.height + MARGIN * 2 + (TEXT_H - total_h) // 2
+    # базовая линия первой строки: центрируем блок в черной зоне
+    y0 = framed.height + MARGIN * 2 + (TEXT_H - total_h) // 2 + int(size * 0.95)
     for ln in lines:
-        x = int((W - d.textlength(ln, font=font)) / 2)
-        d.text((x, y), ln, fill=(255, 255, 255), font=font)
-        y += line_h
+        line_w = sum(word_width(d, w, big, small) for w in ln) + space_w * (len(ln) - 1)
+        x = (W - line_w) / 2
+        draw_small_caps_line(d, ln, x, y0, big, small, fill=(255, 255, 255))
+        y0 += line_h
 
     out = os.path.join(DATA_DIR, f"dem_{int(time.time() * 1000)}.jpg")
     canvas.save(out, quality=95)
@@ -256,14 +338,17 @@ def make_text_demotivator(caption):
     W, H = 900, 650
     img = Image.new("RGB", (W, H), (255, 255, 255))
     d = ImageDraw.Draw(img)
-    font, lines, line_h, _ = fit_text(d, caption, W - 80, H - 80, start=64)
+    size, lines, line_h = fit_text_small_caps(d, caption, W - 80, H - 80, start=56)
+    big, small = small_caps_fonts(size)
 
+    space_w = d.textlength(" ", font=small)
     total_h = len(lines) * line_h
-    y = (H - total_h) // 2
+    y0 = (H - total_h) // 2 + int(size * 0.95)
     for ln in lines:
-        x = int((W - d.textlength(ln, font=font)) / 2)
-        d.text((x, y), ln, fill=(0, 0, 0), font=font)
-        y += line_h
+        line_w = sum(word_width(d, w, big, small) for w in ln) + space_w * (len(ln) - 1)
+        x = (W - line_w) / 2
+        draw_small_caps_line(d, ln, x, y0, big, small, fill=(0, 0, 0))
+        y0 += line_h
 
     out = os.path.join(DATA_DIR, f"demtxt_{int(time.time() * 1000)}.jpg")
     img.save(out, quality=95)
