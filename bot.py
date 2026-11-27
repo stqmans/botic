@@ -23,7 +23,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
-VERSION = "v12: тонкие черные поля, крупное фото"
+VERSION = "v13: полоса текста выше, текст больше не упирается в низ"
 
 # ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
 
@@ -255,6 +255,10 @@ def draw_two_tier(d, center_x, max_w, zone_top, zone_h, title, subtitle, fill):
     if subtitle:
         block_h += 10 + len(lines_s) * lh_s
 
+    # если блок не влез в зону — не даём ему выехать за нижний край
+    if block_h > zone_h:
+        block_h = zone_h
+
     top = zone_top + (zone_h - block_h) // 2
 
     y = top
@@ -273,12 +277,12 @@ def make_demotivator(src, caption):
 
     # --- ВСЁ СЧИТАЕТСЯ ОТ КВАДРАТНОГО ХОЛСТА ---
     CANVAS = 800   # итоговый размер картинки: 800 x 800, всегда квадрат
-    MARGIN = 15    # черные поля вокруг рамки (тонкие, вдвое меньше)
+    MARGIN = 15    # черные поля вокруг рамки
     BORDER = 3     # толщина белой рамки
-    TEXT_H = 85    # высота черной зоны под текст (вдвое меньше)
+    TEXT_H = 100   # высота черной зоны под текст (приподняли, чтобы влезал крупный текст)
 
     # фото = холст минус поля, рамка и текстовая зона — тоже квадрат
-    PHOTO = CANVAS - MARGIN * 2 - BORDER * 2 - TEXT_H  # 679
+    PHOTO = CANVAS - MARGIN * 2 - BORDER * 2 - TEXT_H  # 664
 
     photo = img.resize((PHOTO, PHOTO))
 
