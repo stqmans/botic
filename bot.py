@@ -502,3 +502,7 @@ def on_photo(m):
 
 print("Бот запущен")
 bot.infinity_polling(skip_pending=True)
+print("=== ЗАПУЩЕНА ВЕРСИЯ v5: КВАДРАТ + ЗАГЛАВНАЯ ===")
+@bot.message_handler(commands=["version"])
+def cmd_version(m):
+    bot.send_message(m.chat.id, "Версия v5: квадрат + заглавная буква")
