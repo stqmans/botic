@@ -23,7 +23,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
-VERSION = "v8: метка версии на демотиваторе"
+VERSION = "v9: ровное центрирование текста"
 
 # ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
 
@@ -184,13 +184,8 @@ def is_admin(m):
 
 # ---------- Текст: заголовок + подпись ----------
 
-def capitalize_caption(caption):
-    caption = caption.strip()
-    if caption:
-        caption = caption[0].upper() + caption[1:]
-    return caption
-
 def split_caption(caption):
+    # делим текст на заголовок (крупный) и подпись (мельче)
     for punct in (". ", "! ", "? "):
         idx = caption.find(punct)
         if idx != -1:
@@ -204,14 +199,14 @@ def split_caption(caption):
     mid = (len(words) + 1) // 2
     return " ".join(words[:mid]), " ".join(words[mid:])
 
-# ---------- Перенос и подбор размера текста ----------
+# ---------- Перенос и подбор размера (без draw — меряем шрифтом) ----------
 
-def wrap_lines(draw, text, font, max_w):
+def wrap_lines(text, font, max_w):
     words = text.split()
     lines, line = [], ""
     for w in words:
         test = (line + " " + w).strip()
-        if draw.textlength(test, font=font) > max_w and line:
+        if font.getlength(test) > max_w and line:
             lines.append(line)
             line = w
         else:
@@ -220,60 +215,60 @@ def wrap_lines(draw, text, font, max_w):
         lines.append(line)
     return lines
 
-def fit_text(draw, text, max_w, max_h, start, min_size=14):
+def fit_text(text, max_w, max_h, start, min_size=14):
+    # подбираем самый крупный размер, при котором текст влезает по ширине и высоте
     for size in range(start, min_size - 1, -2):
         font = get_font(size)
-        lines = wrap_lines(draw, text, font, max_w)
-        line_h = int(size * 1.2)
-        widest = max(draw.textlength(ln, font=font) for ln in lines)
+        lines = wrap_lines(text, font, max_w)
+        line_h = int(size * 1.25)
+        widest = max(font.getlength(ln) for ln in lines)
         if len(lines) * line_h <= max_h and widest <= max_w:
             return font, lines, line_h, size
     font = get_font(min_size)
-    lines = wrap_lines(draw, text, font, max_w)
-    return font, lines, int(min_size * 1.2), min_size
+    lines = wrap_lines(text, font, max_w)
+    return font, lines, int(min_size * 1.25), min_size
 
 # ---------- Метка версии в углу демотиватора ----------
 
 def stamp_version(d, canvas):
     tag = VERSION.split(":")[0]
     font = get_font(14)
-    w = int(d.textlength(tag, font=font))
+    w = int(font.getlength(tag))
     d.text((canvas.width - w - 10, canvas.height - 24), tag,
            fill=(120, 120, 120), font=font)
 
 # ---------- Демотиваторы ----------
 
-def draw_two_tier(d, canvas_w, zone_h, title, subtitle, fill, y_offset):
-    # y_offset — где начинается текстовая зона на холсте (высота фото + поля)
-    max_w = canvas_w
+def draw_two_tier(d, center_x, max_w, zone_top, zone_h, title, subtitle, fill):
+    # рисуем блок «заголовок + подпись» строго по центру текстовой зоны
     if subtitle:
         title_zone = int(zone_h * 0.55)
-        sub_zone = zone_h - title_zone - 12
+        sub_zone = zone_h - title_zone - 14
     else:
         title_zone = zone_h
         sub_zone = 0
 
-    font_t, lines_t, lh_t, size_t = fit_text(d, title, max_w, title_zone, start=52)
+    font_t, lines_t, lh_t, size_t = fit_text(title, max_w, title_zone, start=52)
     lines_s, font_s, lh_s = [], None, 0
     if subtitle:
-        sub_start = max(14, int(size_t * 0.52))
-        font_s, lines_s, lh_s, _ = fit_text(d, subtitle, max_w, sub_zone, start=sub_start)
+        sub_start = max(14, int(size_t * 0.55))
+        font_s, lines_s, lh_s, _ = fit_text(subtitle, max_w, sub_zone, start=sub_start)
 
-    total_h = len(lines_t) * lh_t
+    block_h = len(lines_t) * lh_t
     if subtitle:
-        total_h += 12 + len(lines_s) * lh_s
+        block_h += 14 + len(lines_s) * lh_s
 
-    y = y_offset + (zone_h - total_h) // 2
+    # верх блока: центр блока совпадает с центром зоны
+    top = zone_top + (zone_h - block_h) // 2
 
+    y = top
     for ln in lines_t:
-        x = int((canvas_w - d.textlength(ln, font=font_t)) / 2)
-        d.text((x, y), ln, fill=fill, font=font_t)
+        d.text((center_x, y + lh_t / 2), ln, fill=fill, font=font_t, anchor="mm")
         y += lh_t
     if subtitle:
-        y += 12
+        y += 14
         for ln in lines_s:
-            x = int((canvas_w - d.textlength(ln, font=font_s)) / 2)
-            d.text((x, y), ln, fill=fill, font=font_s)
+            d.text((center_x, y + lh_s / 2), ln, fill=fill, font=font_s, anchor="mm")
             y += lh_s
 
 
@@ -283,7 +278,7 @@ def make_demotivator(src, caption):
     PHOTO_W = 700   # ширина = высота фото: всегда квадрат
     BORDER  = 3     # толщина белой рамки
     MARGIN  = 30    # черные поля вокруг рамки
-    TEXT_H  = 170   # высота черной зоны под текст
+    TEXT_H  = 160   # высота черной зоны под текст
 
     photo = img.resize((PHOTO_W, PHOTO_W))
 
@@ -296,13 +291,12 @@ def make_demotivator(src, caption):
     canvas = Image.new("RGB", (W, H), (0, 0, 0))
     canvas.paste(framed, (MARGIN, MARGIN))
 
-    caption = capitalize_caption(caption)
-    title, subtitle = split_caption(caption)
+    title, subtitle = split_caption(caption.strip())
 
     d = ImageDraw.Draw(canvas)
-    y_offset = framed.height + MARGIN * 2   # текстовая зона начинается ПОД фото
-    draw_two_tier(d, W - MARGIN * 2 - 10, TEXT_H, title, subtitle,
-                  fill=(255, 255, 255), y_offset=y_offset)
+    zone_top = framed.height + MARGIN * 2          # где начинается черная полоса
+    draw_two_tier(d, W / 2, W - MARGIN * 2, zone_top, TEXT_H,
+                  title, subtitle, fill=(255, 255, 255))
     stamp_version(d, canvas)
 
     out = os.path.join(DATA_DIR, f"dem_{int(time.time() * 1000)}.jpg")
@@ -315,10 +309,8 @@ def make_text_demotivator(caption):
     img = Image.new("RGB", (W, H), (0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    caption = capitalize_caption(caption)
-    title, subtitle = split_caption(caption)
-    draw_two_tier(d, W - 80, H - 80, title, subtitle,
-                  fill=(255, 255, 255), y_offset=40)
+    title, subtitle = split_caption(caption.strip())
+    draw_two_tier(d, W / 2, W - 100, 40, H - 80, title, subtitle, fill=(255, 255, 255))
     stamp_version(d, img)
 
     out = os.path.join(DATA_DIR, f"demtxt_{int(time.time() * 1000)}.jpg")
