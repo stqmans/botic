@@ -23,7 +23,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 BOT_ID = bot.get_me().id
 BOT_USERNAME = bot.get_me().username
 
-VERSION = "v7: квадрат + заголовок/подпись + текст на своем месте"
+VERSION = "v8: метка версии на демотиваторе"
 
 # ---------- Шрифт (жирный, с засечками — классика демотиваторов) ----------
 
@@ -191,7 +191,6 @@ def capitalize_caption(caption):
     return caption
 
 def split_caption(caption):
-    # делим текст на заголовок (крупный) и подпись (мельче)
     for punct in (". ", "! ", "? "):
         idx = caption.find(punct)
         if idx != -1:
@@ -232,6 +231,15 @@ def fit_text(draw, text, max_w, max_h, start, min_size=14):
     font = get_font(min_size)
     lines = wrap_lines(draw, text, font, max_w)
     return font, lines, int(min_size * 1.2), min_size
+
+# ---------- Метка версии в углу демотиватора ----------
+
+def stamp_version(d, canvas):
+    tag = VERSION.split(":")[0]
+    font = get_font(14)
+    w = int(d.textlength(tag, font=font))
+    d.text((canvas.width - w - 10, canvas.height - 24), tag,
+           fill=(120, 120, 120), font=font)
 
 # ---------- Демотиваторы ----------
 
@@ -277,7 +285,6 @@ def make_demotivator(src, caption):
     MARGIN  = 30    # черные поля вокруг рамки
     TEXT_H  = 170   # высота черной зоны под текст
 
-    # Фото принудительно сплющивается до квадрата 700x700
     photo = img.resize((PHOTO_W, PHOTO_W))
 
     framed = Image.new("RGB", (photo.width + BORDER * 2,
@@ -293,9 +300,10 @@ def make_demotivator(src, caption):
     title, subtitle = split_caption(caption)
 
     d = ImageDraw.Draw(canvas)
-    y_offset = framed.height + MARGIN * 2   # <- ИСПРАВЛЕНИЕ: текстовая зона начинается под фото
+    y_offset = framed.height + MARGIN * 2   # текстовая зона начинается ПОД фото
     draw_two_tier(d, W - MARGIN * 2 - 10, TEXT_H, title, subtitle,
                   fill=(255, 255, 255), y_offset=y_offset)
+    stamp_version(d, canvas)
 
     out = os.path.join(DATA_DIR, f"dem_{int(time.time() * 1000)}.jpg")
     canvas.save(out, quality=95)
@@ -311,6 +319,7 @@ def make_text_demotivator(caption):
     title, subtitle = split_caption(caption)
     draw_two_tier(d, W - 80, H - 80, title, subtitle,
                   fill=(255, 255, 255), y_offset=40)
+    stamp_version(d, img)
 
     out = os.path.join(DATA_DIR, f"demtxt_{int(time.time() * 1000)}.jpg")
     img.save(out, quality=95)
